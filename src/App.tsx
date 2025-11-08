@@ -1,506 +1,1222 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-/* =========================
-   1) CRITERIOS (tu definición)
-   ========================= */
-type CriterionId = "terminaciones" | "grado" | "posicion" | "genero" | "numero";
-
-type Criterion = {
-  id: CriterionId;
-  title: string;
-  // las opciones se comparan por igualdad exacta (minúsculas)
-  options: string[];
-  // texto de ayuda para explicar fallos
-  help: (adjective: string, sentence: string, correct: string) => string;
-};
-
-const CRITERIA: Criterion[] = [
-  {
-    id: "terminaciones",
-    title: "Número de terminaciones",
-    options: ["una", "dos"],
-    help: (adj, s, correct) =>
-      `Para "${adj}", la respuesta correcta es "${correct}": 
-- "dos" cuando admite forma en "-o" y "-a" (p. ej., bueno/buena, aplicado/aplicada).
-- "una" cuando mantiene la misma terminación para masculino y femenino (p. ej., fácil, interesante).
-Fíjate en la forma del adjetivo dentro de la frase: «${s}».`,
-  },
-  {
-    id: "grado",
-    title: "Grado",
-    options: [
-      "positivo",
-      "comparativo - superioridad",
-      "comparativo - igualdad",
-      "comparativo - inferioridad",
-      "superlativo - absoluto",
-      "superlativo - relativo",
-    ],
-    help: (adj, s, correct) =>
-      `El grado correcto es "${correct}". Recuerda:
-- "positivo": cualidad sin comparación (p. ej., "rojo", "alto").
-- "comparativo - superioridad": con "más ... que".
-- "comparativo - igualdad": con "tan ... como".
-- "comparativo - inferioridad": con "menos ... que".
-- "superlativo - absoluto": intensifica sin comparar ("-ísimo", "muy ...").
-- "superlativo - relativo": "el/la más ..." dentro de un grupo.
-Frase: «${s}».`,
-  },
-  {
-    id: "posicion",
-    title: "Posición",
-    options: ["explicativos", "especificativos"],
-    help: (adj, s, correct) =>
-      `Aquí es "${correct}":
-- "explicativos" (suelen ir antepuestos): añaden una cualidad no delimitadora (p. ej., "la inmensa ciudad").
-- "especificativos" (suelen ir pospuestos): delimitan o distinguen ("el coche rojo" = ¿cuál? el rojo).
-Observa la función del adjetivo en «${s}».`,
-  },
-  {
-    id: "genero",
-    title: "Género",
-    options: ["masculino", "femenino"],
-    help: (adj, s, correct) =>
-      `En la frase «${s}», el adjetivo "${adj}" concuerda con el sustantivo en género: "${correct}".`,
-  },
-  {
-    id: "numero",
-    title: "Número",
-    options: ["singular", "plural"],
-    help: (adj, s, correct) =>
-      `En «${s}», el adjetivo "${adj}" concuerda en número con el sustantivo: "${correct}".`,
-  },
-];
-
-/* =========================
-   2) BANCO DE FRASES (ejemplo)
-   - Puedes editar/añadir las que quieras
-   - "answers" debe cubrir los 5 criterios anteriores
-   ========================= */
-type Item = {
-  sentence: string;
-  adjective: string; // lo que debe identificar
-  answers: Record<CriterionId, string>;
-};
-
-const ITEMS: Item[] = [
-  {
-    sentence: "El coche rojo avanzó lentamente.",
-    adjective: "rojo",
-    answers: {
-      terminaciones: "dos",                      // rojo/roja
-      grado: "positivo",
-      posicion: "especificativos",
-      genero: "masculino",
-      numero: "singular",
-    },
-  },
-  {
-    sentence: "La inmensa ciudad estaba iluminada.",
-    adjective: "inmensa",
-    answers: {
-      terminaciones: "dos",                      // inmenso/inmensa
-      grado: "positivo",
-      posicion: "explicativos",
-      genero: "femenino",
-      numero: "singular",
-    },
-  },
-  {
-    sentence: "Este ejercicio es más fácil que el anterior.",
-    adjective: "fácil",
-    answers: {
-      terminaciones: "una",                      // fácil/fácil
-      grado: "comparativo - superioridad",
-      posicion: "especificativos",
-      genero: "masculino",
-      numero: "singular",
-    },
-  },
-  {
-    sentence: "Sus resultados son tan buenos como los tuyos.",
-    adjective: "buenos",
-    answers: {
-      terminaciones: "dos",                      // bueno/buena
-      grado: "comparativo - igualdad",
-      posicion: "especificativos",
-      genero: "masculino",
-      numero: "plural",
-    },
-  },
-  {
-    sentence: "Es menos interesante que el anterior.",
-    adjective: "interesante",
-    answers: {
-      terminaciones: "una",
-      grado: "comparativo - inferioridad",
-      posicion: "especificativos",
-      genero: "masculino",
-      numero: "singular",
-    },
-  },
-  {
-    sentence: "Es el alumno más aplicado de la clase.",
-    adjective: "aplicado",
-    answers: {
-      terminaciones: "dos",
-      grado: "superlativo - relativo",
-      posicion: "especificativos",
-      genero: "masculino",
-      numero: "singular",
-    },
-  },
-  {
-    sentence: "Está felicísimo con el resultado.",
-    adjective: "felicísimo",
-    answers: {
-      terminaciones: "dos",
-      grado: "superlativo - absoluto",
-      posicion: "especificativos",
-      genero: "masculino",
-      numero: "singular",
-    },
-  },
-];
-
-/* =========================
-   3) UTILIDADES
-   ========================= */
-const norm = (s: string) =>
-  s.normalize("NFD").replace(/\p{Diacritic}/gu, "").trim().toLowerCase();
-
-/* =========================
-   4) UI BÁSICA (estética)
-   ========================= */
-function Shell({ children }: { children: React.ReactNode }) {
-  return <div className="min-h-screen bg-slate-50 grid place-items-center p-6">{children}</div>;
-}
-function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={`w-full bg-white border border-slate-200 rounded-2xl p-6 shadow-sm ${className}`}>
-      {children}
-    </div>
-  );
-}
-function Primary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  const { className = "", ...rest } = props;
-  return (
-    <button
-      {...rest}
-      className={[
-        "px-5 py-3 rounded-xl font-semibold bg-sky-600 text-white hover:bg-sky-700 active:bg-sky-800",
-        "shadow-sm hover:shadow transition", className,
-      ].join(" ")}
-    />
-  );
-}
-function Secondary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  const { className = "", ...rest } = props;
-  return (
-    <button
-      {...rest}
-      className={[
-        "px-5 py-3 rounded-xl font-semibold bg-white text-slate-800 border border-slate-300 hover:border-slate-400",
-        "shadow-sm hover:shadow transition", className,
-      ].join(" ")}
-    />
-  );
-}
-function Info({
-  children,
-  ok = false,
-}: {
-  children: React.ReactNode;
-  ok?: boolean;
-}) {
-  return (
-    <div
-      className={[
-        "px-4 py-2 rounded-lg text-sm text-center max-w-xl mx-auto border",
-        ok ? "text-green-700 bg-green-50 border-green-200" : "text-rose-700 bg-rose-50 border-rose-200",
-      ].join(" ")}
-    >
-      {children}
-    </div>
-  );
-}
-
-/* =========================
-   5) APP — FLUJO DE PANTALLAS
-   ========================= */
+/** ================== Tipos ================== */
+type Screen = "home" | "mode" | "identify" | "classify";
 type Mode = "escribir" | "botones";
-type Screen = "intro" | "pickMode" | "identify" | "classify";
 
-export default function App() {
-  const [screen, setScreen] = useState<Screen>("intro");
-  const [mode, setMode] = useState<Mode | null>(null);
-  const [idx, setIdx] = useState(0);
+type Truth = {
+  terminaciones: "Una" | "Dos";
+  grado:
+    | "Positivo"
+    | "Comparativo > Superioridad"
+    | "Comparativo > Igualdad"
+    | "Comparativo > Inferioridad"
+    | "Superlativo > Absoluto"
+    | "Superlativo > Relativo";
+  posicion: "Explicativo" | "Especificativo";
+  genero: "Masculino" | "Femenino";
+  numero: "Singular" | "Plural";
+};
 
-  const item = useMemo(() => ITEMS[idx], [idx]);
+type Item = { text: string; adj: string; truth: Truth };
+type FieldIntent = "neutral" | "good" | "bad";
 
-  // IDENTIFICAR
-  const [inputAdj, setInputAdj] = useState("");
-  const [identifyFeedback, setIdentifyFeedback] = useState<"ok" | "ko" | null>(null);
+/** ================== Utilidades y estilos simples ================== */
+const box: React.CSSProperties = {
+  maxWidth: 900,
+  width: "100%",
+  margin: "32px auto",
+  padding: 20,
+  border: "1px solid #e5e7eb",
+  borderRadius: 16,
+  background: "#fff",
+  boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+};
 
-  // CLASIFICAR - estado común
-  // Para cada criterio guardamos lo seleccionado/escrito y si ya está validado.
-  type CriterionState = {
-    value: string;
-    status: "idle" | "ok" | "ko";
-    explanation?: string;
+const heading: React.CSSProperties = {
+  fontSize: 24,
+  fontWeight: 700,
+  margin: "8px 0 16px 0",
+  textAlign: "center",
+};
+
+const pill: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "6px 12px",
+  border: "1px solid #cbd5e1",
+  borderRadius: 999,
+  color: "#334155",
+  fontSize: 14,
+};
+
+function Row({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+      {children}
+    </div>
+  );
+}
+
+function ChoiceBtn({
+  label,
+  selected,
+  onClick,
+  intent = "neutral",
+}: {
+  label: string;
+  selected: boolean;
+  onClick: () => void;
+  intent?: FieldIntent;
+}) {
+  const base: React.CSSProperties = {
+    minWidth: 120,
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid",
+    fontWeight: 600,
+    fontSize: 14,
+    cursor: "pointer",
+    background: "#fff",
   };
-  const [answers, setAnswers] = useState<Record<CriterionId, CriterionState>>({
-    terminaciones: { value: "", status: "idle" },
-    grado: { value: "", status: "idle" },
-    posicion: { value: "", status: "idle" },
-    genero: { value: "", status: "idle" },
-    numero: { value: "", status: "idle" },
+  let style: React.CSSProperties = { ...base, borderColor: "#cbd5e1", color: "#0f172a" };
+  if (intent === "good") style = { ...style, background: "#dcfce7", borderColor: "#86efac", color: "#166534" };
+  if (intent === "bad") style = { ...style, background: "#fee2e2", borderColor: "#fca5a5", color: "#991b1b" };
+  if (selected && intent === "neutral") style = { ...style, boxShadow: "0 0 0 2px #cbd5e1 inset" };
+  return (
+    <button style={style} onClick={onClick}>
+      {label}
+    </button>
+  );
+}
+
+/** ================== DATOS ==================
+ *  ➜ PEGA AQUÍ TU ARRAY COMPLETO DE 100 FRASES:
+ *     const DATA: Item[] = [ { text, adj, truth }, ... ];
+ */
+const DATA: Item[] = [
+  {
+    text: "El perro fiel esperó a su dueño toda la tarde.",
+    adj: "fiel",
+    truth: {
+      terminaciones: "Una",
+      grado: "Positivo",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "Las montañas altas se veían cubiertas de nieve.",
+    adj: "altas",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Positivo",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Plural",
+    },
+  },
+  {
+    text: "Mi hermano es más fuerte que yo.",
+    adj: "fuerte",
+    truth: {
+      terminaciones: "Una",
+      grado: "Comparativo > Superioridad",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El día soleado animó a todos a salir.",
+    adj: "soleado",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Positivo",
+      posicion: "Explicativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El trabajo de Marta fue excelente.",
+    adj: "excelente",
+    truth: {
+      terminaciones: "Una",
+      grado: "Positivo",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "La película es menos interesante que el libro.",
+    adj: "interesante",
+    truth: {
+      terminaciones: "Una",
+      grado: "Comparativo > Inferioridad",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El río está más limpio que el año pasado.",
+    adj: "limpio",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Comparativo > Superioridad",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "La casa vieja fue derribada por completo.",
+    adj: "vieja",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Positivo",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El chico tan amable nos ayudó con las bolsas.",
+    adj: "amable",
+    truth: {
+      terminaciones: "Una",
+      grado: "Comparativo > Igualdad",
+      posicion: "Explicativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "La sopa está riquísima esta noche.",
+    adj: "riquísima",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Superlativo > Absoluto",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El más alto de la clase ganó la carrera.",
+    adj: "alto",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Superlativo > Relativo",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "Los estudiantes responsables entregaron el trabajo a tiempo.",
+    adj: "responsables",
+    truth: {
+      terminaciones: "Una",
+      grado: "Positivo",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Plural",
+    },
+  },
+  {
+    text: "La niña pequeña juega con su muñeca nueva.",
+    adj: "pequeña",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Positivo",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El examen fue facilísimo para los alumnos preparados.",
+    adj: "facilísimo",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Superlativo > Absoluto",
+      posicion: "Explicativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El pastel está tan dulce como el de ayer.",
+    adj: "dulce",
+    truth: {
+      terminaciones: "Una",
+      grado: "Comparativo > Igualdad",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "Las flores más bonitas del jardín son las rosas.",
+    adj: "bonitas",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Superlativo > Relativo",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Plural",
+    },
+  },
+  {
+    text: "El tren rápido salió puntual de la estación.",
+    adj: "rápido",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Positivo",
+      posicion: "Explicativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "La noche estrellada iluminaba el cielo.",
+    adj: "estrellada",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Positivo",
+      posicion: "Explicativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El examen de hoy ha sido más difícil que el anterior.",
+    adj: "difícil",
+    truth: {
+      terminaciones: "Una",
+      grado: "Comparativo > Superioridad",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El campo verde se extendía hasta el horizonte.",
+    adj: "verde",
+    truth: {
+      terminaciones: "Una",
+      grado: "Positivo",
+      posicion: "Explicativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "La comida estaba más salada que ayer.",
+    adj: "salada",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Comparativo > Superioridad",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El sol brillante apareció tras las nubes.",
+    adj: "brillante",
+    truth: {
+      terminaciones: "Una",
+      grado: "Positivo",
+      posicion: "Explicativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "Mis amigos son menos simpáticos que los tuyos.",
+    adj: "simpáticos",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Comparativo > Inferioridad",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Plural",
+    },
+  },
+  {
+    text: "El café está más caliente que la leche.",
+    adj: "caliente",
+    truth: {
+      terminaciones: "Una",
+      grado: "Comparativo > Superioridad",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El niño obediente recogió sus juguetes.",
+    adj: "obediente",
+    truth: {
+      terminaciones: "Una",
+      grado: "Positivo",
+      posicion: "Explicativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El coche nuevo de mi padre brilla mucho.",
+    adj: "nuevo",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Positivo",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "La clase fue aburridísima.",
+    adj: "aburridísima",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Superlativo > Absoluto",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El día fue tan largo como el anterior.",
+    adj: "largo",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Comparativo > Igualdad",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "Los alumnos más aplicados aprobaron con nota.",
+    adj: "aplicados",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Superlativo > Relativo",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Plural",
+    },
+  },
+  {
+    text: "La niña más lista de la clase resolvió el problema.",
+    adj: "lista",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Superlativo > Relativo",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "Los cuadros antiguos decoraban la sala.",
+    adj: "antiguos",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Positivo",
+      posicion: "Explicativo",
+      genero: "Masculino",
+      numero: "Plural",
+    },
+  },
+  {
+    text: "El niño pequeño es más travieso que su hermano.",
+    adj: "travieso",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Comparativo > Superioridad",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "La playa está menos limpia que el año pasado.",
+    adj: "limpia",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Comparativo > Inferioridad",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El agua del mar es clarísima.",
+    adj: "clarísima",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Superlativo > Absoluto",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "Mi madre cocina mejor que nadie.",
+    adj: "mejor",
+    truth: {
+      terminaciones: "Una",
+      grado: "Comparativo > Superioridad",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El más sabio de todos fue el anciano.",
+    adj: "sabio",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Superlativo > Relativo",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "Las calles estrechas del pueblo son preciosas.",
+    adj: "estrechas",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Positivo",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Plural",
+    },
+  },
+  {
+    text: "El peor jugador del equipo falló el penalti.",
+    adj: "peor",
+    truth: {
+      terminaciones: "Una",
+      grado: "Superlativo > Relativo",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El río ancho tiene un puente nuevo.",
+    adj: "ancho",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Positivo",
+      posicion: "Explicativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "La nieve es más blanca que la leche.",
+    adj: "blanca",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Comparativo > Superioridad",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El viento fuerte soplaba del norte.",
+    adj: "fuerte",
+    truth: {
+      terminaciones: "Una",
+      grado: "Positivo",
+      posicion: "Explicativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "La habitación está tan limpia como la tuya.",
+    adj: "limpia",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Comparativo > Igualdad",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El cielo está nubladísimo hoy.",
+    adj: "nubladísimo",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Superlativo > Absoluto",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "Las flores rojas decoran la mesa.",
+    adj: "rojas",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Positivo",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Plural",
+    },
+  },
+  {
+    text: "Los soldados valientes lucharon hasta el final.",
+    adj: "valientes",
+    truth: {
+      terminaciones: "Una",
+      grado: "Positivo",
+      posicion: "Explicativo",
+      genero: "Masculino",
+      numero: "Plural",
+    },
+  },
+  {
+    text: "El café más amargo se sirve sin azúcar.",
+    adj: "amargo",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Superlativo > Relativo",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "La ciudad grande tiene muchos habitantes.",
+    adj: "grande",
+    truth: {
+      terminaciones: "Una",
+      grado: "Positivo",
+      posicion: "Explicativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "Las playas limpias atraen a los turistas.",
+    adj: "limpias",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Positivo",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Plural",
+    },
+  },
+  {
+    text: "El agua está fría hoy.",
+    adj: "fría",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Positivo",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El mar está menos agitado que ayer.",
+    adj: "agitado",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Comparativo > Inferioridad",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "La comida buenísima encantó a todos.",
+    adj: "buenísima",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Superlativo > Absoluto",
+      posicion: "Explicativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El hombre pobre necesitaba ayuda.",
+    adj: "pobre",
+    truth: {
+      terminaciones: "Una",
+      grado: "Positivo",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El coche rojo es más bonito que el azul.",
+    adj: "bonito",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Comparativo > Superioridad",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "La casa más grande está al final de la calle.",
+    adj: "grande",
+    truth: {
+      terminaciones: "Una",
+      grado: "Superlativo > Relativo",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El pastel está tan bueno como el de ayer.",
+    adj: "bueno",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Comparativo > Igualdad",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "El más hermoso de todos los cuadros estaba en el museo.",
+    adj: "hermoso",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Superlativo > Relativo",
+      posicion: "Especificativo",
+      genero: "Masculino",
+      numero: "Singular",
+    },
+  },
+  {
+    text: "Las calles nuevas están limpias y ordenadas.",
+    adj: "nuevas",
+    truth: {
+      terminaciones: "Dos",
+      grado: "Positivo",
+      posicion: "Especificativo",
+      genero: "Femenino",
+      numero: "Plural",
+  },
+},
+];
+
+/** ================== APP ================== */
+export default function App() {
+  // flujo
+  const [screen, setScreen] = useState<Screen>("home");
+  const [mode, setMode] = useState<Mode | null>(null);
+
+  // índice aleatorio (no repetimos consecutivo)
+  const [index, setIndex] = useState(() => Math.floor(Math.random() * DATA.length));
+  const frase = DATA[index];
+
+  // identificar
+  const [typedAdj, setTypedAdj] = useState("");
+  const [identifyOk, setIdentifyOk] = useState<boolean | null>(null);
+
+  // clasificar
+  const [picked, setPicked] = useState<Partial<Truth>>({});
+  const [checked, setChecked] = useState(false);
+  const [fieldResult, setFieldResult] = useState<Record<keyof Truth, FieldIntent>>({
+    terminaciones: "neutral",
+    grado: "neutral",
+    posicion: "neutral",
+    genero: "neutral",
+    numero: "neutral",
   });
 
-  // resetear estados al cambiar de pantalla/ítem/modo
+  // reset al cambiar de frase
   useEffect(() => {
-    setInputAdj("");
-    setIdentifyFeedback(null);
-    setAnswers({
-      terminaciones: { value: "", status: "idle" },
-      grado: { value: "", status: "idle" },
-      posicion: { value: "", status: "idle" },
-      genero: { value: "", status: "idle" },
-      numero: { value: "", status: "idle" },
+    setTypedAdj("");
+    setIdentifyOk(null);
+    setPicked({});
+    setChecked(false);
+    setFieldResult({
+      terminaciones: "neutral",
+      grado: "neutral",
+      posicion: "neutral",
+      genero: "neutral",
+      numero: "neutral",
     });
-  }, [screen, idx, mode]);
+  }, [index]);
 
-  // Portada
-  if (screen === "intro") {
+  // Acciones
+  const start = () => setScreen("mode");
+  const pickMode = (m: Mode) => {
+    setMode(m);
+    setScreen("identify");
+  };
+
+  const norm = (s: string) =>
+    s.normalize("NFD").replace(/\p{Diacritic}/gu, "").trim().toLowerCase();
+
+  const checkIdentify = () => {
+    const ok = norm(frase.adj) === norm(typedAdj);
+    setIdentifyOk(ok);
+    if (ok) setTimeout(() => setScreen("classify"), 350);
+  };
+
+  const setPick = <K extends keyof Truth>(k: K, v: Truth[K]) =>
+    setPicked((p) => ({ ...p, [k]: v }));
+
+  const comprobarClasificacion = () => {
+    const truth = frase.truth;
+    const r: Record<keyof Truth, FieldIntent> = {
+      terminaciones:
+        picked.terminaciones === truth.terminaciones
+          ? "good"
+          : picked.terminaciones
+          ? "bad"
+          : "neutral",
+      grado: picked.grado === truth.grado ? "good" : picked.grado ? "bad" : "neutral",
+      posicion:
+        picked.posicion === truth.posicion ? "good" : picked.posicion ? "bad" : "neutral",
+      genero: picked.genero === truth.genero ? "good" : picked.genero ? "bad" : "neutral",
+      numero: picked.numero === truth.numero ? "good" : picked.numero ? "bad" : "neutral",
+    };
+    setFieldResult(r);
+    setChecked(true);
+  };
+
+  const siguiente = () => {
+    setIndex((prev) => {
+      let next;
+      do {
+        next = Math.floor(Math.random() * DATA.length);
+      } while (next === prev);
+      return next;
+    });
+    setScreen("identify");
+  };
+
+  const explain = (k: keyof Truth) => {
+    if (!checked) return "";
+    if (fieldResult[k] === "good") return "¡Correcto!";
+    switch (k) {
+      case "terminaciones":
+        return "Algunas tienen una sola terminación (amable, verde); otras, dos (rojo/roja).";
+      case "grado":
+        return "Grado: positivo (sin comparación), comparativo (>, =, <) o superlativo (absoluto/relativo).";
+      case "posicion":
+        return "Explicativo (antepuesto, no restringe) vs especificativo (pospuesto, restringe).";
+      case "genero":
+        return "Concuerda con el sustantivo en masculino/femenino.";
+      case "numero":
+        return "Concuerda con el sustantivo en singular/plural.";
+    }
+  };
+
+  /** ========== Render ========== */
+
+  if (screen === "home")
     return (
-      <Shell>
-        <Card className="max-w-3xl mx-auto text-center space-y-8">
-          <h1 className="text-4xl font-extrabold tracking-tight">Clasifica los adjetivos</h1>
-          <div className="text-lg leading-relaxed text-slate-700">
-            <p className="mb-2">1) Identifica el adjetivo en la frase.</p>
-            <p>2) Clasifícalo en los 5 criterios del examen.</p>
+      <main style={{ padding: 16 }}>
+        <div style={box}>
+          <h1 style={heading}>Clasifica los adjetivos</h1>
+          <div style={{ color: "#334155", lineHeight: 1.5, marginBottom: 16 }}>
+            <ul style={{ paddingLeft: 18, marginTop: 8 }}>
+              <li>1) Identifica el adjetivo de la frase (escríbelo).</li>
+              <li>2) Clasifícalo: terminaciones, grado, posición, género y número.</li>
+            </ul>
           </div>
-          <Primary onClick={() => setScreen("pickMode")}>Empezar</Primary>
-        </Card>
-      </Shell>
-    );
-  }
-
-  // Elegir modo
-  if (screen === "pickMode") {
-    return (
-      <Shell>
-        <Card className="max-w-3xl mx-auto space-y-6">
-          <h2 className="text-3xl font-bold text-center">¿Qué modalidad eliges?</h2>
-          <div className="grid sm:grid-cols-2 gap-3">
+          <Row>
             <button
-              className="px-4 py-3 rounded-xl border border-slate-200 bg-white text-left hover:shadow transition"
-              onClick={() => { setMode("escribir"); setScreen("identify"); }}
+              onClick={start}
+              style={{
+                padding: "12px 16px",
+                borderRadius: 12,
+                background: "#0f172a",
+                color: "#fff",
+                fontWeight: 700,
+                border: "none",
+                cursor: "pointer",
+              }}
             >
-              <div className="font-semibold">Modo escribir</div>
-              <div className="text-sm text-slate-500 mt-1">
-                Escribe las respuestas de cada criterio.
-              </div>
+              Empezar
+            </button>
+          </Row>
+        </div>
+      </main>
+    );
+
+  if (screen === "mode")
+    return (
+      <main style={{ padding: 16 }}>
+        <div style={box}>
+          <h2 style={{ ...heading, fontSize: 22 }}>¿Qué modalidad eliges?</h2>
+          <Row>
+            <button
+              onClick={() => pickMode("escribir")}
+              style={{
+                padding: "12px 16px",
+                borderRadius: 12,
+                background: mode === "escribir" ? "#0f172a" : "#fff",
+                color: mode === "escribir" ? "#fff" : "#0f172a",
+                fontWeight: 700,
+                border: "1px solid #cbd5e1",
+                cursor: "pointer",
+              }}
+            >
+              Modo escribir
             </button>
             <button
-              className="px-4 py-3 rounded-xl border border-slate-200 bg-white text-left hover:shadow transition"
-              onClick={() => { setMode("botones"); setScreen("identify"); }}
+              onClick={() => pickMode("botones")}
+              style={{
+                padding: "12px 16px",
+                borderRadius: 12,
+                background: mode === "botones" ? "#0f172a" : "#fff",
+                color: mode === "botones" ? "#fff" : "#0f172a",
+                fontWeight: 700,
+                border: "1px solid #cbd5e1",
+                cursor: "pointer",
+              }}
             >
-              <div className="font-semibold">Modo botones</div>
-              <div className="text-sm text-slate-500 mt-1">
-                Elige pulsando botones (verde/rojo al comprobar).
-              </div>
+              Modo botones
             </button>
-          </div>
-          <Secondary onClick={() => setScreen("intro")}>Volver</Secondary>
-        </Card>
-      </Shell>
+          </Row>
+        </div>
+      </main>
     );
-  }
 
-  // Identificar adjetivo
-  if (screen === "identify" && mode) {
+  if (screen === "identify")
     return (
-      <Shell>
-        <Card className="max-w-3xl mx-auto space-y-6">
-          <h2 className="text-2xl font-bold text-center">Identifica el adjetivo</h2>
-          <div className="text-center text-3xl font-semibold text-slate-900">
-            “{item.sentence}”
+      <main style={{ padding: 16 }}>
+        <div style={box}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={pill}>Frases: {DATA.length}</span>
           </div>
 
-          <div className="space-y-3 max-w-xl mx-auto">
-            <label className="block text-slate-700 font-medium">Escribe el adjetivo:</label>
+          <h2 style={{ ...heading, fontSize: 22, marginTop: 0 }}>Identifica el adjetivo</h2>
+          <p
+            style={{
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              borderRadius: 12,
+              padding: 16,
+              fontSize: 18,
+              color: "#0f172a",
+              lineHeight: 1.6,
+            }}
+          >
+            {frase.text}
+          </p>
+
+          <div style={{ marginTop: 16 }}>
             <input
-              value={inputAdj}
-              onChange={(e) => setInputAdj(e.target.value)}
-              placeholder="Escribe aquí el adjetivo…"
-              className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400"
+              value={typedAdj}
+              onChange={(e) => setTypedAdj(e.target.value)}
+              placeholder="Escribe el adjetivo…"
+              style={{
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: "1px solid #cbd5e1",
+                fontSize: 16,
+                outline: "none",
+              }}
             />
-            <div className="flex gap-3 justify-center">
-              <Primary
-                onClick={() => {
-                  const ok = norm(inputAdj) === norm(item.adjective);
-                  setIdentifyFeedback(ok ? "ok" : "ko");
-                  if (ok) setTimeout(() => setScreen("classify"), 450);
+            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+              <button
+                onClick={checkIdentify}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 12,
+                  background: "#0f172a",
+                  color: "#fff",
+                  border: "none",
+                  fontWeight: 700,
+                  cursor: "pointer",
                 }}
               >
                 Comprobar
-              </Primary>
-              <Secondary onClick={() => setScreen("pickMode")}>Cambiar modalidad</Secondary>
+              </button>
             </div>
-
-            {identifyFeedback === "ok" && <Info ok>¡Correcto! Ahora clasifícalo.</Info>}
-            {identifyFeedback === "ko" && <Info> No es correcto. Inténtalo de nuevo. </Info>}
+            {identifyOk === false && (
+              <p style={{ color: "#991b1b", marginTop: 8 }}>No es correcto. Vuelve a intentarlo.</p>
+            )}
+            {identifyOk === true && (
+              <p style={{ color: "#166534", marginTop: 8 }}>¡Correcto! Pasamos a clasificar…</p>
+            )}
           </div>
-        </Card>
-      </Shell>
+        </div>
+      </main>
     );
-  }
 
-  // Clasificar (dos modos)
-  if (screen === "classify" && mode) {
-    const corrects = item.answers;
-
-    // helpers para validar y explicar
-    const setOne = (id: CriterionId, proposed: string) => {
-      const criterion = CRITERIA.find((c) => c.id === id)!;
-      const correct = corrects[id];
-      const ok = norm(proposed) === norm(correct);
-      setAnswers((prev) => ({
-        ...prev,
-        [id]: {
-          value: proposed,
-          status: ok ? "ok" : "ko",
-          explanation: ok ? undefined : criterion.help(item.adjective, item.sentence, correct),
-        },
-      }));
-    };
-
-    const allOk = ((): boolean =>
-      (Object.keys(corrects) as CriterionId[]).every((k) => answers[k].status === "ok"))();
+  if (screen === "classify") {
+    const truth = frase.truth;
 
     return (
-      <Shell>
-        <Card className="max-w-4xl mx-auto space-y-6">
-          <h2 className="text-2xl font-bold text-center">Clasifica el adjetivo</h2>
-
-          <div className="text-center text-lg text-slate-700">
-            Frase: <span className="font-semibold">“{item.sentence}”</span>
-          </div>
-          <div className="text-center">
-            <span className="text-slate-600">Adjetivo:</span>{" "}
-            <span className="text-2xl font-extrabold">{item.adjective}</span>
+      <main style={{ padding: 16 }}>
+        <div style={box}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={pill}>Adjetivo: {frase.adj}</span>
           </div>
 
-          {mode === "botones" && (
-            <div className="space-y-6">
-              {CRITERIA.map((c) => {
-                const st = answers[c.id];
-                return (
-                  <div key={c.id} className="border-t border-slate-200 pt-4">
-                    <div className="font-semibold mb-2">{c.title}</div>
-                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                      {c.options.map((opt) => {
-                        const chosen = st.value === opt;
-                        const isCorrect = chosen && st.status === "ok";
-                        const isWrong = chosen && st.status === "ko";
-                        return (
-                          <button
-                            key={opt}
-                            onClick={() => setOne(c.id, opt)}
-                            className={[
-                              "px-4 py-3 rounded-xl border text-left transition bg-white",
-                              "shadow-sm hover:shadow",
-                              chosen ? "ring-2 ring-sky-400 border-sky-300" : "border-slate-200",
-                              isCorrect ? "bg-green-100 border-green-300 ring-green-400" : "",
-                              isWrong ? "bg-rose-100 border-rose-300 ring-rose-400" : "",
-                            ].join(" ")}
-                          >
-                            <span className="capitalize">{opt}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
+          <p
+            style={{
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              borderRadius: 12,
+              padding: 16,
+              fontSize: 18,
+              color: "#0f172a",
+              lineHeight: 1.6,
+              marginBottom: 16,
+            }}
+          >
+            {frase.text}
+          </p>
 
-                    {st.status === "ko" && st.explanation && (
-                      <div className="mt-2">
-                        <Info>{st.explanation}</Info>
-                      </div>
-                    )}
-                    {st.status === "ok" && (
-                      <div className="mt-2">
-                        <Info ok>✔ Correcto en “{c.title}”.</Info>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          {/* 1) Terminaciones */}
+          <section style={{ marginBottom: 16 }}>
+            <h3 style={{ marginBottom: 8, fontSize: 18 }}>1) Número de terminaciones</h3>
+            <Row>
+              {(["Una", "Dos"] as Truth["terminaciones"][]).map((opt) => (
+                <ChoiceBtn
+                  key={opt}
+                  label={opt}
+                  selected={picked.terminaciones === opt}
+                  onClick={() => setPick("terminaciones", opt)}
+                  intent={fieldResult.terminaciones}
+                />
+              ))}
+            </Row>
+            {checked && <p style={{ color: "#475569", fontSize: 14 }}>{explain("terminaciones")}</p>}
+          </section>
 
-          {mode === "escribir" && (
-            <div className="space-y-6">
-              {CRITERIA.map((c) => {
-                const st = answers[c.id];
-                return (
-                  <div key={c.id} className="border-t border-slate-200 pt-4">
-                    <div className="font-semibold mb-2">{c.title}</div>
-                    <div className="flex gap-2 items-center max-w-xl">
-                      <input
-                        value={st.value}
-                        onChange={(e) =>
-                          setAnswers((prev) => ({
-                            ...prev,
-                            [c.id]: { ...prev[c.id], value: e.target.value, status: "idle", explanation: undefined },
-                          }))
-                        }
-                        placeholder={`Escribe aquí (${c.options.join(" / ")})`}
-                        className={[
-                          "w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2",
-                          st.status === "ok"
-                            ? "border-green-300 focus:ring-green-300 bg-green-50"
-                            : st.status === "ko"
-                            ? "border-rose-300 focus:ring-rose-300 bg-rose-50"
-                            : "border-slate-300 focus:ring-sky-300",
-                        ].join(" ")}
-                      />
-                      <Primary onClick={() => setOne(c.id, st.value)}>Comprobar</Primary>
-                    </div>
-
-                    {st.status === "ko" && st.explanation && (
-                      <div className="mt-2">
-                        <Info>{st.explanation}</Info>
-                      </div>
-                    )}
-                    {st.status === "ok" && (
-                      <div className="mt-2">
-                        <Info ok>✔ Correcto en “{c.title}”.</Info>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          <div className="flex justify-center gap-3 pt-2">
-            <Secondary onClick={() => setScreen("pickMode")}>Cambiar modalidad</Secondary>
-            <Primary
-              className={allOk ? "" : "opacity-50 cursor-not-allowed"}
-              disabled={!allOk}
-              onClick={() => {
-                const next = (idx + 1) % ITEMS.length;
-                setIdx(next);
-                setScreen("identify");
+          {/* 2) Grado (3 columnas) */}
+          <section style={{ marginBottom: 16 }}>
+            <h3 style={{ marginBottom: 8, fontSize: 18 }}>2) Grado</h3>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: 12,
               }}
             >
-              Siguiente frase
-            </Primary>
-          </div>
-        </Card>
-      </Shell>
+              {/* Positivo */}
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+                <p style={{ margin: 0, marginBottom: 8, color: "#64748b", fontSize: 14 }}>Positivo</p>
+                <Row>
+                  <ChoiceBtn
+                    label="Positivo"
+                    selected={picked.grado === "Positivo"}
+                    onClick={() => setPick("grado", "Positivo")}
+                    intent={fieldResult.grado}
+                  />
+                </Row>
+              </div>
+
+              {/* Comparativo */}
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+                <p style={{ margin: 0, marginBottom: 8, color: "#64748b", fontSize: 14 }}>Comparativo</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {(
+                    [
+                      "Comparativo > Superioridad",
+                      "Comparativo > Igualdad",
+                      "Comparativo > Inferioridad",
+                    ] as Truth["grado"][]
+                  ).map((opt) => (
+                    <ChoiceBtn
+                      key={opt}
+                      label={opt.replace("Comparativo > ", "")}
+                      selected={picked.grado === opt}
+                      onClick={() => setPick("grado", opt)}
+                      intent={fieldResult.grado}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Superlativo */}
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+                <p style={{ margin: 0, marginBottom: 8, color: "#64748b", fontSize: 14 }}>Superlativo</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {(
+                    ["Superlativo > Absoluto", "Superlativo > Relativo"] as Truth["grado"][]
+                  ).map((opt) => (
+                    <ChoiceBtn
+                      key={opt}
+                      label={opt.replace("Superlativo > ", "")}
+                      selected={picked.grado === opt}
+                      onClick={() => setPick("grado", opt)}
+                      intent={fieldResult.grado}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+            {checked && <p style={{ color: "#475569", fontSize: 14 }}>{explain("grado")}</p>}
+          </section>
+
+          {/* 3) Posición */}
+          <section style={{ marginBottom: 16 }}>
+            <h3 style={{ marginBottom: 8, fontSize: 18 }}>3) Posición</h3>
+            <Row>
+              {(["Explicativo", "Especificativo"] as Truth["posicion"][]).map((opt) => (
+                <ChoiceBtn
+                  key={opt}
+                  label={opt}
+                  selected={picked.posicion === opt}
+                  onClick={() => setPick("posicion", opt)}
+                  intent={fieldResult.posicion}
+                />
+              ))}
+            </Row>
+            {checked && <p style={{ color: "#475569", fontSize: 14 }}>{explain("posicion")}</p>}
+          </section>
+
+          {/* 4) Género */}
+          <section style={{ marginBottom: 16 }}>
+            <h3 style={{ marginBottom: 8, fontSize: 18 }}>4) Género</h3>
+            <Row>
+              {(["Masculino", "Femenino"] as Truth["genero"][]).map((opt) => (
+                <ChoiceBtn
+                  key={opt}
+                  label={opt}
+                  selected={picked.genero === opt}
+                  onClick={() => setPick("genero", opt)}
+                  intent={fieldResult.genero}
+                />
+              ))}
+            </Row>
+            {checked && <p style={{ color: "#475569", fontSize: 14 }}>{explain("genero")}</p>}
+          </section>
+
+          {/* 5) Número */}
+          <section style={{ marginBottom: 16 }}>
+            <h3 style={{ marginBottom: 8, fontSize: 18 }}>5) Número</h3>
+            <Row>
+              {(["Singular", "Plural"] as Truth["numero"][]).map((opt) => (
+                <ChoiceBtn
+                  key={opt}
+                  label={opt}
+                  selected={picked.numero === opt}
+                  onClick={() => setPick("numero", opt)}
+                  intent={fieldResult.numero}
+                />
+              ))}
+            </Row>
+            {checked && <p style={{ color: "#475569", fontSize: 14 }}>{explain("numero")}</p>}
+          </section>
+
+          {/* Acciones */}
+          <Row>
+            <button
+              onClick={comprobarClasificacion}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 12,
+                background: "#0f172a",
+                color: "#fff",
+                border: "none",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Comprobar clasificación
+            </button>
+            {checked && (
+              <button
+                onClick={siguiente}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 12,
+                  background: "#fff",
+                  color: "#0f172a",
+                  border: "1px solid #cbd5e1",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Continuar
+              </button>
+            )}
+          </Row>
+
+          {/* Resumen tras comprobar */}
+          {checked && (
+            <div
+              style={{
+                marginTop: 12,
+                background: "#f8fafc",
+                border: "1px solid #e2e8f0",
+                borderRadius: 12,
+                padding: 12,
+                display: "grid",
+                gap: 8,
+                gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                fontSize: 14,
+                color: "#334155",
+              }}
+            >
+              <p>
+                Terminaciones:{" "}
+                <strong style={{ color: fieldResult.terminaciones === "good" ? "#166534" : "#991b1b" }}>
+                  {picked.terminaciones ?? "—"}
+                </strong>{" "}
+                (correcta: {truth.terminaciones})
+              </p>
+              <p>
+                Grado:{" "}
+                <strong style={{ color: fieldResult.grado === "good" ? "#166534" : "#991b1b" }}>
+                  {picked.grado ?? "—"}
+                </strong>{" "}
+                (correcta: {truth.grado})
+              </p>
+              <p>
+                Posición:{" "}
+                <strong style={{ color: fieldResult.posicion === "good" ? "#166534" : "#991b1b" }}>
+                  {picked.posicion ?? "—"}
+                </strong>{" "}
+                (correcta: {truth.posicion})
+              </p>
+              <p>
+                Género:{" "}
+                <strong style={{ color: fieldResult.genero === "good" ? "#166534" : "#991b1b" }}>
+                  {picked.genero ?? "—"}
+                </strong>{" "}
+                (correcta: {truth.genero})
+              </p>
+              <p>
+                Número:{" "}
+                <strong style={{ color: fieldResult.numero === "good" ? "#166534" : "#991b1b" }}>
+                  {picked.numero ?? "—"}
+                </strong>{" "}
+                (correcta: {truth.numero})
+              </p>
+            </div>
+          )}
+        </div>
+      </main>
     );
   }
 
   return null;
 }
+
