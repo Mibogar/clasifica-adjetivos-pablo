@@ -1,673 +1,506 @@
 import { useEffect, useMemo, useState } from "react";
-import "./App.css";
 
-/** ============================
- *  v2.5 – Clasifica adjetivos (Pablo)
- *  Novedades:
- *   - Pantalla 1: frase + escribir adjetivo. Si acierta → Pantalla 2.
- *   - Resumen en vivo de las elecciones (se mantiene seleccionado).
- *   - Botones mejorados (colores/estados).
- *  ============================ */
+/* =========================
+   1) CRITERIOS (tu definición)
+   ========================= */
+type CriterionId = "terminaciones" | "grado" | "posicion" | "genero" | "numero";
 
-type NumeroTerminaciones = "una" | "dos";
-type Grado =
-  | "positivo"
-  | "comparativo-superioridad"
-  | "comparativo-igualdad"
-  | "comparativo-inferioridad"
-  | "superlativo-absoluto"
-  | "superlativo-relativo";
-type Posicion = "explicativo" | "especificativo";
-type Genero = "masculino" | "femenino";
-type Numero = "singular" | "plural";
+type Criterion = {
+  id: CriterionId;
+  title: string;
+  // las opciones se comparan por igualdad exacta (minúsculas)
+  options: string[];
+  // texto de ayuda para explicar fallos
+  help: (adjective: string, sentence: string, correct: string) => string;
+};
 
+const CRITERIA: Criterion[] = [
+  {
+    id: "terminaciones",
+    title: "Número de terminaciones",
+    options: ["una", "dos"],
+    help: (adj, s, correct) =>
+      `Para "${adj}", la respuesta correcta es "${correct}": 
+- "dos" cuando admite forma en "-o" y "-a" (p. ej., bueno/buena, aplicado/aplicada).
+- "una" cuando mantiene la misma terminación para masculino y femenino (p. ej., fácil, interesante).
+Fíjate en la forma del adjetivo dentro de la frase: «${s}».`,
+  },
+  {
+    id: "grado",
+    title: "Grado",
+    options: [
+      "positivo",
+      "comparativo - superioridad",
+      "comparativo - igualdad",
+      "comparativo - inferioridad",
+      "superlativo - absoluto",
+      "superlativo - relativo",
+    ],
+    help: (adj, s, correct) =>
+      `El grado correcto es "${correct}". Recuerda:
+- "positivo": cualidad sin comparación (p. ej., "rojo", "alto").
+- "comparativo - superioridad": con "más ... que".
+- "comparativo - igualdad": con "tan ... como".
+- "comparativo - inferioridad": con "menos ... que".
+- "superlativo - absoluto": intensifica sin comparar ("-ísimo", "muy ...").
+- "superlativo - relativo": "el/la más ..." dentro de un grupo.
+Frase: «${s}».`,
+  },
+  {
+    id: "posicion",
+    title: "Posición",
+    options: ["explicativos", "especificativos"],
+    help: (adj, s, correct) =>
+      `Aquí es "${correct}":
+- "explicativos" (suelen ir antepuestos): añaden una cualidad no delimitadora (p. ej., "la inmensa ciudad").
+- "especificativos" (suelen ir pospuestos): delimitan o distinguen ("el coche rojo" = ¿cuál? el rojo).
+Observa la función del adjetivo en «${s}».`,
+  },
+  {
+    id: "genero",
+    title: "Género",
+    options: ["masculino", "femenino"],
+    help: (adj, s, correct) =>
+      `En la frase «${s}», el adjetivo "${adj}" concuerda con el sustantivo en género: "${correct}".`,
+  },
+  {
+    id: "numero",
+    title: "Número",
+    options: ["singular", "plural"],
+    help: (adj, s, correct) =>
+      `En «${s}», el adjetivo "${adj}" concuerda en número con el sustantivo: "${correct}".`,
+  },
+];
+
+/* =========================
+   2) BANCO DE FRASES (ejemplo)
+   - Puedes editar/añadir las que quieras
+   - "answers" debe cubrir los 5 criterios anteriores
+   ========================= */
 type Item = {
-  id: number;
-  frase?: string;
-  adjetivo: string;
-  numeroTerminaciones: NumeroTerminaciones;
-  grado: Grado;
-  posicion: Posicion;
-  genero: Genero;
-  numero: Numero;
+  sentence: string;
+  adjective: string; // lo que debe identificar
+  answers: Record<CriterionId, string>;
 };
 
 const ITEMS: Item[] = [
-  { id: 1, frase: "Es un día espléndido.", adjetivo: "espléndido", numeroTerminaciones: "dos", grado: "positivo", posicion: "explicativo", genero: "masculino", numero: "singular" },
-  { id: 2, frase: "La tarea es difícil.", adjetivo: "difícil", numeroTerminaciones: "una", grado: "positivo", posicion: "especificativo", genero: "femenino", numero: "singular" },
-  { id: 3, frase: "Compramos camisas azules.", adjetivo: "azules", numeroTerminaciones: "una", grado: "positivo", posicion: "especificativo", genero: "femenino", numero: "plural" },
-  { id: 4, frase: "Es un buen amigo.", adjetivo: "buen", numeroTerminaciones: "dos", grado: "positivo", posicion: "explicativo", genero: "masculino", numero: "singular" },
-  { id: 5, frase: "María es más alta que Ana.", adjetivo: "alta", numeroTerminaciones: "dos", grado: "comparativo-superioridad", posicion: "especificativo", genero: "femenino", numero: "singular" },
-  { id: 6, frase: "Pablo es tan rápido como Luis.", adjetivo: "rápido", numeroTerminaciones: "dos", grado: "comparativo-igualdad", posicion: "especificativo", genero: "masculino", numero: "singular" },
-  { id: 7, frase: "Este ejercicio es menos complejo que el anterior.", adjetivo: "complejo", numeroTerminaciones: "dos", grado: "comparativo-inferioridad", posicion: "especificativo", genero: "masculino", numero: "singular" },
-  { id: 8, frase: "Es un trabajo facilísimo.", adjetivo: "facilísimo", numeroTerminaciones: "una", grado: "superlativo-absoluto", posicion: "explicativo", genero: "masculino", numero: "singular" },
-  { id: 9, frase: "El alumno más aplicado de la clase ganó el premio.", adjetivo: "aplicado", numeroTerminaciones: "dos", grado: "superlativo-relativo", posicion: "especificativo", genero: "masculino", numero: "singular" },
-  { id: 10, frase: "Compramos manzanas rojas.", adjetivo: "rojas", numeroTerminaciones: "dos", grado: "positivo", posicion: "especificativo", genero: "femenino", numero: "plural" },
+  {
+    sentence: "El coche rojo avanzó lentamente.",
+    adjective: "rojo",
+    answers: {
+      terminaciones: "dos",                      // rojo/roja
+      grado: "positivo",
+      posicion: "especificativos",
+      genero: "masculino",
+      numero: "singular",
+    },
+  },
+  {
+    sentence: "La inmensa ciudad estaba iluminada.",
+    adjective: "inmensa",
+    answers: {
+      terminaciones: "dos",                      // inmenso/inmensa
+      grado: "positivo",
+      posicion: "explicativos",
+      genero: "femenino",
+      numero: "singular",
+    },
+  },
+  {
+    sentence: "Este ejercicio es más fácil que el anterior.",
+    adjective: "fácil",
+    answers: {
+      terminaciones: "una",                      // fácil/fácil
+      grado: "comparativo - superioridad",
+      posicion: "especificativos",
+      genero: "masculino",
+      numero: "singular",
+    },
+  },
+  {
+    sentence: "Sus resultados son tan buenos como los tuyos.",
+    adjective: "buenos",
+    answers: {
+      terminaciones: "dos",                      // bueno/buena
+      grado: "comparativo - igualdad",
+      posicion: "especificativos",
+      genero: "masculino",
+      numero: "plural",
+    },
+  },
+  {
+    sentence: "Es menos interesante que el anterior.",
+    adjective: "interesante",
+    answers: {
+      terminaciones: "una",
+      grado: "comparativo - inferioridad",
+      posicion: "especificativos",
+      genero: "masculino",
+      numero: "singular",
+    },
+  },
+  {
+    sentence: "Es el alumno más aplicado de la clase.",
+    adjective: "aplicado",
+    answers: {
+      terminaciones: "dos",
+      grado: "superlativo - relativo",
+      posicion: "especificativos",
+      genero: "masculino",
+      numero: "singular",
+    },
+  },
+  {
+    sentence: "Está felicísimo con el resultado.",
+    adjective: "felicísimo",
+    answers: {
+      terminaciones: "dos",
+      grado: "superlativo - absoluto",
+      posicion: "especificativos",
+      genero: "masculino",
+      numero: "singular",
+    },
+  },
 ];
 
-const LABELS = {
-  numeroTerminaciones: { una: "1 terminación", dos: "2 terminaciones" },
-  grado: {
-    "positivo": "Positivo",
-    "comparativo-superioridad": "Comparativo (superioridad)",
-    "comparativo-igualdad": "Comparativo (igualdad)",
-    "comparativo-inferioridad": "Comparativo (inferioridad)",
-    "superlativo-absoluto": "Superlativo absoluto",
-    "superlativo-relativo": "Superlativo relativo",
-  },
-  posicion: { explicativo: "Explicativo (delante)", especificativo: "Especificativo (detrás)" },
-  genero: { masculino: "Masculino", femenino: "Femenino" },
-  numero: { singular: "Singular", plural: "Plural" },
-} as const;
-
-type Campo = "numeroTerminaciones" | "grado" | "posicion" | "genero" | "numero";
-
+/* =========================
+   3) UTILIDADES
+   ========================= */
 const norm = (s: string) =>
-  s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  s.normalize("NFD").replace(/\p{Diacritic}/gu, "").trim().toLowerCase();
 
-const pick = <T,>(arr: T[], exceptId?: number) => {
-  const pool = exceptId ? (arr as any[]).filter((x) => x.id !== exceptId) : (arr as any[]);
-  return pool[Math.floor(Math.random() * pool.length)];
-};
-
-export default function App() {
-  // Configuración
-  const [modo, setModo] = useState<"botones" | "escrita">(
-    (localStorage.getItem("modo") as any) || "botones"
-  );
-  useEffect(() => localStorage.setItem("modo", modo), [modo]);
-
-  // Estado principal
-  const [item, setItem] = useState<Item>(() => pick(ITEMS));
-  const [ultimoId, setUltimoId] = useState(item.id);
-  const [pantalla, setPantalla] = useState<1 | 2>(1); // 1: frase+adjetivo, 2: clasificar
-
-  // Paso 1
-  const [entradaAdjetivo, setEntradaAdjetivo] = useState("");
-  const [feedback1, setFeedback1] = useState("");
-
-  // Paso 2
-  const [respB, setRespB] = useState({
-    numeroTerminaciones: "" as NumeroTerminaciones | "",
-    grado: "" as Grado | "",
-    posicion: "" as Posicion | "",
-    genero: "" as Genero | "",
-    numero: "" as Numero | "",
-  });
-  const [respE, setRespE] = useState({
-    numeroTerminaciones: "",
-    grado: "",
-    posicion: "",
-    genero: "",
-    numero: "",
-  });
-  const [erroresCampos, setErroresCampos] = useState<Campo[]>([]);
-  const [mostrarSolucion, setMostrarSolucion] = useState(false);
-  const [feedback2, setFeedback2] = useState("");
-
-  const nuevoItem = () => {
-    const nxt = pick(ITEMS, ultimoId);
-    setItem(nxt);
-    setUltimoId(nxt.id);
-    setPantalla(1);
-    setEntradaAdjetivo("");
-    setFeedback1("");
-    setRespB({ numeroTerminaciones: "", grado: "", posicion: "", genero: "", numero: "" });
-    setRespE({ numeroTerminaciones: "", grado: "", posicion: "", genero: "", numero: "" });
-    setErroresCampos([]);
-    setMostrarSolucion(false);
-    setFeedback2("");
-  };
-
-  // -------- Pantalla 1: comprobar adjetivo --------
-  const comprobarAdjetivo = () => {
-    if (norm(entradaAdjetivo) === norm(item.adjetivo)) {
-      setFeedback1("");
-      setPantalla(2);
-    } else {
-      setFeedback1("❌ Ese no es el adjetivo de la frase. Inténtalo otra vez.");
-    }
-  };
-
-  // -------- Pantalla 2: comprobar clasificación --------
-  const comprobarClasificacion = () => {
-    const usarBotones = modo === "botones";
-    const r = usarBotones ? (respB as any) : (respE as any);
-
-    const correctas = {
-      numeroTerminaciones: item.numeroTerminaciones,
-      grado: item.grado,
-      posicion: item.posicion,
-      genero: item.genero,
-      numero: item.numero,
-    };
-
-    const err: Campo[] = [];
-    (Object.keys(correctas) as Campo[]).forEach((k) => {
-      const val = r[k];
-      const ok = (correctas as any)[k];
-      const okStr = String(ok).toLowerCase();
-      if (typeof val === "string") {
-        if (val.trim().toLowerCase() !== okStr) err.push(k);
-      } else if (val !== ok) err.push(k);
-    });
-
-    if (err.length === 0) {
-      setFeedback2("✅ ¡Perfecto! Todo correcto.");
-      setErroresCampos([]);
-      setMostrarSolucion(false);
-      setTimeout(nuevoItem, 900);
-    } else {
-      setFeedback2("❌ Hay errores. Revisa los apartados marcados o pulsa «Mostrar solución».");
-      setErroresCampos(err);
-      setMostrarSolucion(false);
-    }
-  };
-
-  // Resumen en vivo (usa respB/respE según modo)
-  const live = modo === "botones" ? respB : (respE as any);
-
+/* =========================
+   4) UI BÁSICA (estética)
+   ========================= */
+function Shell({ children }: { children: React.ReactNode }) {
+  return <div className="min-h-screen bg-slate-50 grid place-items-center p-6">{children}</div>;
+}
+function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-sky-50 to-slate-100">
-      {/* Header */}
-      <header className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex flex-wrap gap-3 items-center justify-between">
-          <h1 className="text-xl sm:text-2xl font-bold">Clasifica los adjetivos — Pablo</h1>
-          <div className="flex flex-wrap items-center gap-2">
-            <StepBadge active={pantalla === 1} label="1. Identifica el adjetivo" />
-            <StepBadge active={pantalla === 2} label="2. Clasifica" />
-            <div className="hidden sm:block w-px h-6 bg-slate-300 mx-1" />
-            <button
-              className={`px-3 py-1.5 rounded-md text-sm border ${
-                modo === "botones" ? "bg-sky-600 text-white border-sky-700" : "bg-white"
-              }`}
-              onClick={() => setModo("botones")}
-            >
-              Modo botones
-            </button>
-            <button
-              className={`px-3 py-1.5 rounded-md text-sm border ${
-                modo === "escrita" ? "bg-sky-600 text-white border-sky-700" : "bg-white"
-              }`}
-              onClick={() => setModo("escrita")}
-            >
-              Modo escrita
-            </button>
-            <button
-              onClick={nuevoItem}
-              className="px-3 py-1.5 rounded-md text-sm border hover:bg-slate-100"
-              title="Saltar a otro ejercicio"
-            >
-              Siguiente
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Contenido */}
-      <main className="max-w-6xl mx-auto px-4 py-6 grid lg:grid-cols-[1fr_340px] gap-6">
-        {/* Columna principal */}
-        <section className="bg-white rounded-2xl shadow p-5">
-          {pantalla === 1 ? (
-            <Pantalla1
-              frase={item.frase || ""}
-              entrada={entradaAdjetivo}
-              setEntrada={setEntradaAdjetivo}
-              onComprobar={comprobarAdjetivo}
-              feedback={feedback1}
-            />
-          ) : (
-            <Pantalla2
-              item={item}
-              modo={modo}
-              respB={respB}
-              setRespB={setRespB}
-              respE={respE}
-              setRespE={setRespE}
-              erroresCampos={erroresCampos}
-              mostrarSolucion={mostrarSolucion}
-              setMostrarSolucion={setMostrarSolucion}
-              onComprobar={comprobarClasificacion}
-              feedback={feedback2}
-            />
-          )}
-        </section>
-
-        {/* Columna lateral: Resumen en vivo */}
-        <aside className="bg-white rounded-2xl shadow p-5 h-fit sticky top-[84px]">
-          <h3 className="text-lg font-semibold mb-2">Resumen de tu respuesta</h3>
-          <ResumenLive live={live} mostrarSolucion={mostrarSolucion} item={item} />
-          {pantalla === 2 && (
-            <p className="mt-3 text-xs text-slate-500">
-              Consejo: si dudas en <b>grados</b>, busca pistas como <i>más/menos…que</i>, <i>tan…como</i> o sufijos <i>-ísimo</i>.
-            </p>
-          )}
-        </aside>
-      </main>
-
-      <footer className="text-center text-xs text-slate-500 py-6">
-        Guardado local en este navegador. Versión 2.5.
-      </footer>
+    <div className={`w-full bg-white border border-slate-200 rounded-2xl p-6 shadow-sm ${className}`}>
+      {children}
     </div>
   );
 }
-
-/* ---------------- Subcomponentes ---------------- */
-
-function StepBadge({ active, label }: { active: boolean; label: string }) {
+function Primary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const { className = "", ...rest } = props;
   return (
-    <span
-      className={`px-2.5 py-1 rounded-full text-xs border ${
-        active ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-50 text-slate-600"
-      }`}
-    >
-      {label}
-    </span>
+    <button
+      {...rest}
+      className={[
+        "px-5 py-3 rounded-xl font-semibold bg-sky-600 text-white hover:bg-sky-700 active:bg-sky-800",
+        "shadow-sm hover:shadow transition", className,
+      ].join(" ")}
+    />
   );
 }
-
-function Pantalla1({
-  frase,
-  entrada,
-  setEntrada,
-  onComprobar,
-  feedback,
+function Secondary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const { className = "", ...rest } = props;
+  return (
+    <button
+      {...rest}
+      className={[
+        "px-5 py-3 rounded-xl font-semibold bg-white text-slate-800 border border-slate-300 hover:border-slate-400",
+        "shadow-sm hover:shadow transition", className,
+      ].join(" ")}
+    />
+  );
+}
+function Info({
+  children,
+  ok = false,
 }: {
-  frase: string;
-  entrada: string;
-  setEntrada: (v: string) => void;
-  onComprobar: () => void;
-  feedback: string;
+  children: React.ReactNode;
+  ok?: boolean;
 }) {
-  return (
-    <div className="animate-fade">
-      <h2 className="text-xl font-semibold mb-3">Paso 1 · Identifica el adjetivo</h2>
-      <div className="rounded-xl p-4 bg-gradient-to-r from-sky-50 to-indigo-50 border">
-        <p className="text-lg">
-          <span className="font-semibold">Frase:</span> {frase}
-        </p>
-      </div>
-      <div className="mt-4 grid sm:grid-cols-[1fr_auto] gap-2">
-        <input
-          value={entrada}
-          onChange={(e) => setEntrada(e.target.value)}
-          className="border rounded-lg px-3 py-2 text-base outline-none focus:ring-2 focus:ring-sky-400"
-          placeholder="Escribe aquí el adjetivo que aparece en la frase"
-        />
-        <button
-          onClick={onComprobar}
-          className="px-4 py-2 rounded-lg bg-emerald-600 text-white font-medium hover:bg-emerald-700"
-        >
-          Comprobar adjetivo
-        </button>
-      </div>
-      {feedback && (
-        <div className="mt-3 rounded-xl border p-3 text-sm bg-rose-50 border-rose-200 text-rose-900">
-          {feedback}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Pantalla2(props: {
-  item: Item;
-  modo: "botones" | "escrita";
-  respB: any;
-  setRespB: any;
-  respE: any;
-  setRespE: any;
-  erroresCampos: Campo[];
-  mostrarSolucion: boolean;
-  setMostrarSolucion: (v: boolean) => void;
-  onComprobar: () => void;
-  feedback: string;
-}) {
-  const {
-    item,
-    modo,
-    respB,
-    setRespB,
-    respE,
-    setRespE,
-    erroresCampos,
-    mostrarSolucion,
-    setMostrarSolucion,
-    onComprobar,
-    feedback,
-  } = props;
-
-  return (
-    <div className="animate-fade">
-      <h2 className="text-xl font-semibold mb-1">Paso 2 · Clasifica</h2>
-      <p className="text-slate-600 mb-3">
-        Adjetivo:{" "}
-        <span className="px-2 py-0.5 rounded bg-sky-50 text-sky-800 border border-sky-100">
-          {item.adjetivo}
-        </span>
-      </p>
-
-      {modo === "botones" ? (
-        <div className="grid md:grid-cols-2 gap-4">
-          <GrupoBotones
-            icon="🎯"
-            color="sky"
-            titulo="Número de terminaciones"
-            opciones={[
-              { key: "una", label: LABELS.numeroTerminaciones.una },
-              { key: "dos", label: LABELS.numeroTerminaciones.dos },
-            ]}
-            valor={respB.numeroTerminaciones}
-            onChange={(v) => setRespB((s: any) => ({ ...s, numeroTerminaciones: v }))}
-            error={erroresCampos.includes("numeroTerminaciones")}
-            solucion={mostrarSolucion ? LABELS.numeroTerminaciones[item.numeroTerminaciones] : undefined}
-          />
-          <GrupoBotones
-            icon="📈"
-            color="violet"
-            titulo="Grado"
-            opciones={[
-              { key: "positivo", label: LABELS.grado["positivo"] },
-              { key: "comparativo-superioridad", label: LABELS.grado["comparativo-superioridad"] },
-              { key: "comparativo-igualdad", label: LABELS.grado["comparativo-igualdad"] },
-              { key: "comparativo-inferioridad", label: LABELS.grado["comparativo-inferioridad"] },
-              { key: "superlativo-absoluto", label: LABELS.grado["superlativo-absoluto"] },
-              { key: "superlativo-relativo", label: LABELS.grado["superlativo-relativo"] },
-            ]}
-            valor={respB.grado}
-            onChange={(v) => setRespB((s: any) => ({ ...s, grado: v }))}
-            error={erroresCampos.includes("grado")}
-            solucion={mostrarSolucion ? LABELS.grado[item.grado] : undefined}
-          />
-          <GrupoBotones
-            icon="📍"
-            color="amber"
-            titulo="Posición"
-            opciones={[
-              { key: "explicativo", label: LABELS.posicion.explicativo },
-              { key: "especificativo", label: LABELS.posicion.especificativo },
-            ]}
-            valor={respB.posicion}
-            onChange={(v) => setRespB((s: any) => ({ ...s, posicion: v }))}
-            error={erroresCampos.includes("posicion")}
-            solucion={mostrarSolucion ? LABELS.posicion[item.posicion] : undefined}
-          />
-          <GrupoBotones
-            icon="👤"
-            color="emerald"
-            titulo="Género"
-            opciones={[
-              { key: "masculino", label: LABELS.genero.masculino },
-              { key: "femenino", label: LABELS.genero.femenino },
-            ]}
-            valor={respB.genero}
-            onChange={(v) => setRespB((s: any) => ({ ...s, genero: v }))}
-            error={erroresCampos.includes("genero")}
-            solucion={mostrarSolucion ? LABELS.genero[item.genero] : undefined}
-          />
-          <GrupoBotones
-            icon="🔢"
-            color="rose"
-            titulo="Número"
-            opciones={[
-              { key: "singular", label: LABELS.numero.singular },
-              { key: "plural", label: LABELS.numero.plural },
-            ]}
-            valor={respB.numero}
-            onChange={(v) => setRespB((s: any) => ({ ...s, numero: v }))}
-            error={erroresCampos.includes("numero")}
-            solucion={mostrarSolucion ? LABELS.numero[item.numero] : undefined}
-          />
-        </div>
-      ) : (
-        <div className="grid md:grid-cols-2 gap-4">
-          <CampoTexto
-            label="Número de terminaciones (una / dos)"
-            value={respE.numeroTerminaciones}
-            onChange={(v) => setRespE((s: any) => ({ ...s, numeroTerminaciones: v }))}
-            error={erroresCampos.includes("numeroTerminaciones")}
-            solucion={mostrarSolucion ? LABELS.numeroTerminaciones[item.numeroTerminaciones] : undefined}
-          />
-          <CampoTexto
-            label="Grado (positivo / comparativo-superioridad / comparativo-igualdad / comparativo-inferioridad / superlativo-absoluto / superlativo-relativo)"
-            value={respE.grado}
-            onChange={(v) => setRespE((s: any) => ({ ...s, grado: v }))}
-            error={erroresCampos.includes("grado")}
-            solucion={mostrarSolucion ? LABELS.grado[item.grado] : undefined}
-          />
-          <CampoTexto
-            label="Posición (explicativo / especificativo)"
-            value={respE.posicion}
-            onChange={(v) => setRespE((s: any) => ({ ...s, posicion: v }))}
-            error={erroresCampos.includes("posicion")}
-            solucion={mostrarSolucion ? LABELS.posicion[item.posicion] : undefined}
-          />
-          <CampoTexto
-            label="Género (masculino / femenino)"
-            value={respE.genero}
-            onChange={(v) => setRespE((s: any) => ({ ...s, genero: v }))}
-            error={erroresCampos.includes("genero")}
-            solucion={mostrarSolucion ? LABELS.genero[item.genero] : undefined}
-          />
-          <CampoTexto
-            label="Número (singular / plural)"
-            value={respE.numero}
-            onChange={(v) => setRespE((s: any) => ({ ...s, numero: v }))}
-            error={erroresCampos.includes("numero")}
-            solucion={mostrarSolucion ? LABELS.numero[item.numero] : undefined}
-          />
-        </div>
-      )}
-
-      <div className="mt-5 flex flex-wrap gap-2">
-        <button
-          onClick={onComprobar}
-          className="px-4 py-2 rounded-lg bg-emerald-600 text-white font-medium hover:bg-emerald-700"
-        >
-          Comprobar
-        </button>
-        <button
-          onClick={() => setMostrarSolucion(true)}
-          className="px-4 py-2 rounded-lg bg-amber-500 text-white font-medium hover:bg-amber-600"
-        >
-          Mostrar solución
-        </button>
-        <button
-          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-          className="px-4 py-2 rounded-lg bg-slate-200 hover:bg-slate-300 font-medium"
-        >
-          Subir arriba
-        </button>
-      </div>
-
-      {feedback && (
-        <div
-          className={`mt-4 rounded-xl border p-4 text-sm ${
-            feedback.startsWith("✅")
-              ? "bg-emerald-50 border-emerald-200 text-emerald-900"
-              : "bg-rose-50 border-rose-200 text-rose-900"
-          }`}
-        >
-          {feedback}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function GrupoBotones(props: {
-  icon?: string;
-  color?: "sky" | "violet" | "amber" | "emerald" | "rose";
-  titulo: string;
-  opciones: { key: string; label: string }[];
-  valor: string;
-  onChange: (v: string) => void;
-  error?: boolean;
-  solucion?: string;
-}) {
-  const { icon, color = "sky", titulo, opciones, valor, onChange, error, solucion } = props;
-
-  const colorMap: Record<string, string> = {
-    sky: "bg-sky-50 border-sky-200",
-    violet: "bg-violet-50 border-violet-200",
-    amber: "bg-amber-50 border-amber-200",
-    emerald: "bg-emerald-50 border-emerald-200",
-    rose: "bg-rose-50 border-rose-200",
-  };
-
   return (
     <div
-      className={`border rounded-2xl p-3 ${error ? "border-rose-300 bg-rose-50/40" : "border-slate-200 bg-white"}`}
+      className={[
+        "px-4 py-2 rounded-lg text-sm text-center max-w-xl mx-auto border",
+        ok ? "text-green-700 bg-green-50 border-green-200" : "text-rose-700 bg-rose-50 border-rose-200",
+      ].join(" ")}
     >
-      <p className="text-sm font-semibold mb-2 flex items-center gap-2">
-        {icon && <span className="text-base">{icon}</span>}
-        {titulo}
-        {solucion && (
-          <span className={`text-[11px] px-2 py-0.5 rounded border ${colorMap[color]} text-slate-800`}>
-            Solución: {solucion}
-          </span>
-        )}
-      </p>
-      <div className="flex flex-wrap gap-2">
-        {opciones.map((op) => {
-          const active = valor === op.key;
-          return (
-            <button
-              key={op.key}
-              onClick={() => onChange(op.key)}
-              className={`px-3 py-2 rounded-xl border text-sm transition
-               ${active
-                  ? "bg-gradient-to-r from-sky-600 to-indigo-600 text-white border-sky-700 shadow"
-                  : "bg-slate-50 hover:bg-slate-100 border-slate-300"
-               }`}
-            >
-              {op.label}
-            </button>
-          );
-        })}
-      </div>
+      {children}
     </div>
   );
 }
 
-function CampoTexto(props: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  error?: boolean;
-  solucion?: string;
-}) {
-  const { label, value, onChange, error, solucion } = props;
-  return (
-    <label className={`grid gap-1 ${error ? "text-rose-700" : ""}`}>
-      <span className="text-sm font-semibold flex items-center gap-2">
-        ✍️ {label}
-        {solucion && (
-          <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-            Solución: {solucion}
-          </span>
-        )}
-      </span>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={`border rounded-lg px-3 py-2 outline-none focus:ring-2 transition ${
-          error ? "border-rose-300 focus:ring-rose-300 bg-rose-50/40" : "focus:ring-sky-400"
-        }`}
-        placeholder="Escribe aquí…"
-      />
-    </label>
-  );
-}
+/* =========================
+   5) APP — FLUJO DE PANTALLAS
+   ========================= */
+type Mode = "escribir" | "botones";
+type Screen = "intro" | "pickMode" | "identify" | "classify";
 
-function ResumenLive({
-  live,
-  mostrarSolucion,
-  item,
-}: {
-  live: any;
-  mostrarSolucion: boolean;
-  item: Item;
-}) {
-  const filas: { k: Campo; titulo: string; val: string; sol: string }[] = [
-    {
-      k: "numeroTerminaciones",
-      titulo: "Número de terminaciones",
-      val: live.numeroTerminaciones || "—",
-      sol: LABELS.numeroTerminaciones[item.numeroTerminaciones],
-    },
-    {
-      k: "grado",
-      titulo: "Grado",
-      val: live.grado || "—",
-      sol: LABELS.grado[item.grado],
-    },
-    {
-      k: "posicion",
-      titulo: "Posición",
-      val: live.posicion || "—",
-      sol: LABELS.posicion[item.posicion],
-    },
-    {
-      k: "genero",
-      titulo: "Género",
-      val: live.genero || "—",
-      sol: LABELS.genero[item.genero],
-    },
-    {
-      k: "numero",
-      titulo: "Número",
-      val: live.numero || "—",
-      sol: LABELS.numero[item.numero],
-    },
-  ];
+export default function App() {
+  const [screen, setScreen] = useState<Screen>("intro");
+  const [mode, setMode] = useState<Mode | null>(null);
+  const [idx, setIdx] = useState(0);
 
-  return (
-    <div className="grid gap-2">
-      {filas.map((f) => (
-        <div
-          key={f.k}
-          className="flex items-start justify-between gap-3 border rounded-lg px-3 py-2 bg-slate-50"
-        >
-          <div className="text-sm">
-            <p className="font-semibold">{f.titulo}</p>
-            <p className="text-slate-700">
-              Elegido:{" "}
-              <span className="font-medium">
-                {pretty(f.k, f.val as string)}
-              </span>
-            </p>
+  const item = useMemo(() => ITEMS[idx], [idx]);
+
+  // IDENTIFICAR
+  const [inputAdj, setInputAdj] = useState("");
+  const [identifyFeedback, setIdentifyFeedback] = useState<"ok" | "ko" | null>(null);
+
+  // CLASIFICAR - estado común
+  // Para cada criterio guardamos lo seleccionado/escrito y si ya está validado.
+  type CriterionState = {
+    value: string;
+    status: "idle" | "ok" | "ko";
+    explanation?: string;
+  };
+  const [answers, setAnswers] = useState<Record<CriterionId, CriterionState>>({
+    terminaciones: { value: "", status: "idle" },
+    grado: { value: "", status: "idle" },
+    posicion: { value: "", status: "idle" },
+    genero: { value: "", status: "idle" },
+    numero: { value: "", status: "idle" },
+  });
+
+  // resetear estados al cambiar de pantalla/ítem/modo
+  useEffect(() => {
+    setInputAdj("");
+    setIdentifyFeedback(null);
+    setAnswers({
+      terminaciones: { value: "", status: "idle" },
+      grado: { value: "", status: "idle" },
+      posicion: { value: "", status: "idle" },
+      genero: { value: "", status: "idle" },
+      numero: { value: "", status: "idle" },
+    });
+  }, [screen, idx, mode]);
+
+  // Portada
+  if (screen === "intro") {
+    return (
+      <Shell>
+        <Card className="max-w-3xl mx-auto text-center space-y-8">
+          <h1 className="text-4xl font-extrabold tracking-tight">Clasifica los adjetivos</h1>
+          <div className="text-lg leading-relaxed text-slate-700">
+            <p className="mb-2">1) Identifica el adjetivo en la frase.</p>
+            <p>2) Clasifícalo en los 5 criterios del examen.</p>
           </div>
-          {mostrarSolucion && (
-            <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-              Correcto: {f.sol}
-            </span>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function pretty(k: Campo, v: string) {
-  if (!v || v === "—") return "—";
-  switch (k) {
-    case "numeroTerminaciones":
-      return (LABELS.numeroTerminaciones as any)[v] || v;
-    case "grado":
-      return (LABELS.grado as any)[v] || v;
-    case "posicion":
-      return (LABELS.posicion as any)[v] || v;
-    case "genero":
-      return (LABELS.genero as any)[v] || v;
-    case "numero":
-      return (LABELS.numero as any)[v] || v;
+          <Primary onClick={() => setScreen("pickMode")}>Empezar</Primary>
+        </Card>
+      </Shell>
+    );
   }
-  return v;
-}
 
-/* Pequeña animación con Tailwind (utiliza clases utilitarias) */
-/* En tu App.css puedes añadir:
-   .animate-fade { animation: fade .25s ease-in-out; }
-   @keyframes fade { from {opacity:.0; transform: translateY(6px)} to {opacity:1; transform: translateY(0)} }
-*/
+  // Elegir modo
+  if (screen === "pickMode") {
+    return (
+      <Shell>
+        <Card className="max-w-3xl mx-auto space-y-6">
+          <h2 className="text-3xl font-bold text-center">¿Qué modalidad eliges?</h2>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <button
+              className="px-4 py-3 rounded-xl border border-slate-200 bg-white text-left hover:shadow transition"
+              onClick={() => { setMode("escribir"); setScreen("identify"); }}
+            >
+              <div className="font-semibold">Modo escribir</div>
+              <div className="text-sm text-slate-500 mt-1">
+                Escribe las respuestas de cada criterio.
+              </div>
+            </button>
+            <button
+              className="px-4 py-3 rounded-xl border border-slate-200 bg-white text-left hover:shadow transition"
+              onClick={() => { setMode("botones"); setScreen("identify"); }}
+            >
+              <div className="font-semibold">Modo botones</div>
+              <div className="text-sm text-slate-500 mt-1">
+                Elige pulsando botones (verde/rojo al comprobar).
+              </div>
+            </button>
+          </div>
+          <Secondary onClick={() => setScreen("intro")}>Volver</Secondary>
+        </Card>
+      </Shell>
+    );
+  }
+
+  // Identificar adjetivo
+  if (screen === "identify" && mode) {
+    return (
+      <Shell>
+        <Card className="max-w-3xl mx-auto space-y-6">
+          <h2 className="text-2xl font-bold text-center">Identifica el adjetivo</h2>
+          <div className="text-center text-3xl font-semibold text-slate-900">
+            “{item.sentence}”
+          </div>
+
+          <div className="space-y-3 max-w-xl mx-auto">
+            <label className="block text-slate-700 font-medium">Escribe el adjetivo:</label>
+            <input
+              value={inputAdj}
+              onChange={(e) => setInputAdj(e.target.value)}
+              placeholder="Escribe aquí el adjetivo…"
+              className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400"
+            />
+            <div className="flex gap-3 justify-center">
+              <Primary
+                onClick={() => {
+                  const ok = norm(inputAdj) === norm(item.adjective);
+                  setIdentifyFeedback(ok ? "ok" : "ko");
+                  if (ok) setTimeout(() => setScreen("classify"), 450);
+                }}
+              >
+                Comprobar
+              </Primary>
+              <Secondary onClick={() => setScreen("pickMode")}>Cambiar modalidad</Secondary>
+            </div>
+
+            {identifyFeedback === "ok" && <Info ok>¡Correcto! Ahora clasifícalo.</Info>}
+            {identifyFeedback === "ko" && <Info> No es correcto. Inténtalo de nuevo. </Info>}
+          </div>
+        </Card>
+      </Shell>
+    );
+  }
+
+  // Clasificar (dos modos)
+  if (screen === "classify" && mode) {
+    const corrects = item.answers;
+
+    // helpers para validar y explicar
+    const setOne = (id: CriterionId, proposed: string) => {
+      const criterion = CRITERIA.find((c) => c.id === id)!;
+      const correct = corrects[id];
+      const ok = norm(proposed) === norm(correct);
+      setAnswers((prev) => ({
+        ...prev,
+        [id]: {
+          value: proposed,
+          status: ok ? "ok" : "ko",
+          explanation: ok ? undefined : criterion.help(item.adjective, item.sentence, correct),
+        },
+      }));
+    };
+
+    const allOk = ((): boolean =>
+      (Object.keys(corrects) as CriterionId[]).every((k) => answers[k].status === "ok"))();
+
+    return (
+      <Shell>
+        <Card className="max-w-4xl mx-auto space-y-6">
+          <h2 className="text-2xl font-bold text-center">Clasifica el adjetivo</h2>
+
+          <div className="text-center text-lg text-slate-700">
+            Frase: <span className="font-semibold">“{item.sentence}”</span>
+          </div>
+          <div className="text-center">
+            <span className="text-slate-600">Adjetivo:</span>{" "}
+            <span className="text-2xl font-extrabold">{item.adjective}</span>
+          </div>
+
+          {mode === "botones" && (
+            <div className="space-y-6">
+              {CRITERIA.map((c) => {
+                const st = answers[c.id];
+                return (
+                  <div key={c.id} className="border-t border-slate-200 pt-4">
+                    <div className="font-semibold mb-2">{c.title}</div>
+                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {c.options.map((opt) => {
+                        const chosen = st.value === opt;
+                        const isCorrect = chosen && st.status === "ok";
+                        const isWrong = chosen && st.status === "ko";
+                        return (
+                          <button
+                            key={opt}
+                            onClick={() => setOne(c.id, opt)}
+                            className={[
+                              "px-4 py-3 rounded-xl border text-left transition bg-white",
+                              "shadow-sm hover:shadow",
+                              chosen ? "ring-2 ring-sky-400 border-sky-300" : "border-slate-200",
+                              isCorrect ? "bg-green-100 border-green-300 ring-green-400" : "",
+                              isWrong ? "bg-rose-100 border-rose-300 ring-rose-400" : "",
+                            ].join(" ")}
+                          >
+                            <span className="capitalize">{opt}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {st.status === "ko" && st.explanation && (
+                      <div className="mt-2">
+                        <Info>{st.explanation}</Info>
+                      </div>
+                    )}
+                    {st.status === "ok" && (
+                      <div className="mt-2">
+                        <Info ok>✔ Correcto en “{c.title}”.</Info>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {mode === "escribir" && (
+            <div className="space-y-6">
+              {CRITERIA.map((c) => {
+                const st = answers[c.id];
+                return (
+                  <div key={c.id} className="border-t border-slate-200 pt-4">
+                    <div className="font-semibold mb-2">{c.title}</div>
+                    <div className="flex gap-2 items-center max-w-xl">
+                      <input
+                        value={st.value}
+                        onChange={(e) =>
+                          setAnswers((prev) => ({
+                            ...prev,
+                            [c.id]: { ...prev[c.id], value: e.target.value, status: "idle", explanation: undefined },
+                          }))
+                        }
+                        placeholder={`Escribe aquí (${c.options.join(" / ")})`}
+                        className={[
+                          "w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2",
+                          st.status === "ok"
+                            ? "border-green-300 focus:ring-green-300 bg-green-50"
+                            : st.status === "ko"
+                            ? "border-rose-300 focus:ring-rose-300 bg-rose-50"
+                            : "border-slate-300 focus:ring-sky-300",
+                        ].join(" ")}
+                      />
+                      <Primary onClick={() => setOne(c.id, st.value)}>Comprobar</Primary>
+                    </div>
+
+                    {st.status === "ko" && st.explanation && (
+                      <div className="mt-2">
+                        <Info>{st.explanation}</Info>
+                      </div>
+                    )}
+                    {st.status === "ok" && (
+                      <div className="mt-2">
+                        <Info ok>✔ Correcto en “{c.title}”.</Info>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex justify-center gap-3 pt-2">
+            <Secondary onClick={() => setScreen("pickMode")}>Cambiar modalidad</Secondary>
+            <Primary
+              className={allOk ? "" : "opacity-50 cursor-not-allowed"}
+              disabled={!allOk}
+              onClick={() => {
+                const next = (idx + 1) % ITEMS.length;
+                setIdx(next);
+                setScreen("identify");
+              }}
+            >
+              Siguiente frase
+            </Primary>
+          </div>
+        </Card>
+      </Shell>
+    );
+  }
+
+  return null;
+}
